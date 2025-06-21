@@ -1,0 +1,679 @@
+import React, { useState, useEffect } from 'react';
+import { Coins, Plus, Minus, RotateCcw, DollarSign, Trophy, Zap, User, LogOut, Eye, EyeOff, CreditCard, ArrowUpCircle, ArrowDownCircle, CheckCircle } from 'lucide-react';
+
+const SlotApp = () => {
+  // Estados de autenticação
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [showLogin, setShowLogin] = useState(true);
+  const [user, setUser] = useState(null);
+  const [loginData, setLoginData] = useState({ email: '', password: '' });
+  const [registerData, setRegisterData] = useState({ 
+    name: '', email: '', password: '', confirmPassword: '' 
+  });
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Estados do jogo
+  const [balance, setBalance] = useState(0);
+  const [betAmount, setBetAmount] = useState(10);
+  const [isSpinning, setIsSpinning] = useState(false);
+  const [slots, setSlots] = useState([
+    ['🍒', '🍋', '🍊'],
+    ['⭐', '💎', '🍒'],
+    ['🍋', '🍊', '⭐']
+  ]);
+  
+  // Estados dos modais
+  const [showDepositModal, setShowDepositModal] = useState(false);
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [depositAmount, setDepositAmount] = useState(50);
+  const [withdrawAmount, setWithdrawAmount] = useState(0);
+  const [lastWin, setLastWin] = useState(0);
+  const [showWinAnimation, setShowWinAnimation] = useState(false);
+  const [showWithdrawSuccess, setShowWithdrawSuccess] = useState(false);
+  const [totalSpins, setTotalSpins] = useState(0);
+
+  const symbols = ['🍒', '🍋', '🍊', '⭐', '💎', '🔔', '🍇', '💰'];
+  const betOptions = [5, 10, 25, 50, 100];
+
+  // Simulação de API
+  const mockUsers = JSON.parse(localStorage.getItem('slotUsers') || '[]');
+  
+  const saveToStorage = (users) => {
+    localStorage.setItem('slotUsers', JSON.stringify(users));
+  };
+
+  const register = async () => {
+    if (registerData.password !== registerData.confirmPassword) {
+      alert('Senhas não coincidem!');
+      return;
+    }
+    
+    if (mockUsers.find(u => u.email === registerData.email)) {
+      alert('Email já cadastrado!');
+      return;
+    }
+
+    const newUser = {
+      id: Date.now(),
+      name: registerData.name,
+      email: registerData.email,
+      password: registerData.password,
+      balance: 0,
+      totalDeposits: 0,
+      totalWithdraws: 0,
+      totalSpins: 0,
+      createdAt: new Date().toISOString()
+    };
+
+    const updatedUsers = [...mockUsers, newUser];
+    saveToStorage(updatedUsers);
+    
+    setUser(newUser);
+    setBalance(newUser.balance);
+    setIsAuthenticated(true);
+    alert('Conta criada com sucesso!');
+  };
+
+  const login = async () => {
+    const foundUser = mockUsers.find(u => 
+      u.email === loginData.email && u.password === loginData.password
+    );
+    
+    if (foundUser) {
+      setUser(foundUser);
+      setBalance(foundUser.balance);
+      setTotalSpins(foundUser.totalSpins || 0);
+      setIsAuthenticated(true);
+    } else {
+      alert('Credenciais inválidas!');
+    }
+  };
+
+  const logout = () => {
+    setIsAuthenticated(false);
+    setUser(null);
+    setBalance(0);
+    setShowLogin(true);
+  };
+
+  const updateUserData = (updates) => {
+    const updatedUsers = mockUsers.map(u => 
+      u.id === user.id ? { ...u, ...updates } : u
+    );
+    saveToStorage(updatedUsers);
+    setUser({ ...user, ...updates });
+  };
+
+  const deposit = () => {
+    const newBalance = balance + depositAmount;
+    setBalance(newBalance);
+    updateUserData({ 
+      balance: newBalance,
+      totalDeposits: (user.totalDeposits || 0) + depositAmount
+    });
+    setShowDepositModal(false);
+  };
+
+  const withdraw = () => {
+    if (withdrawAmount > balance) {
+      alert('Saldo insuficiente!');
+      return;
+    }
+    
+    updateUserData({ 
+      balance: 0,
+      totalWithdraws: (user.totalWithdraws || 0) + withdrawAmount
+    });
+    
+    setBalance(0);
+    setShowWithdrawModal(false);
+    setShowWithdrawSuccess(true);
+    
+    setTimeout(() => setShowWithdrawSuccess(false), 3000);
+  };
+
+  // Lógica de pagamento rentável (RTP ~88%)
+  const calculateWin = (newSlots, spinNumber) => {
+    const random = Math.random() * 100;
+    
+    // 70% sem prêmio
+    if (random > 30) return 0;
+    
+    // Verificar se há linha vencedora real
+    let naturalWin = 0;
+    for (let row = 0; row < 3; row++) {
+      if (newSlots[row][0] === newSlots[row][1] && newSlots[row][1] === newSlots[row][2]) {
+        const symbol = newSlots[row][0];
+        let multiplier = getSymbolMultiplier(symbol);
+        naturalWin += betAmount * multiplier;
+      }
+    }
+    
+    if (naturalWin > 0) return naturalWin;
+    
+    // Premios artificiais baseados na probabilidade
+    if (random > 28) return betAmount * 0.5; // 2% chance - prêmio pequeno
+    if (random > 25) return betAmount * 1.5;  // 3% chance - prêmio pequeno
+    if (random > 20) return betAmount * 2;    // 5% chance - prêmio médio
+    if (random > 15) return betAmount * 3;    // 5% chance - prêmio médio
+    if (random > 10) return betAmount * 5;    // 5% chance - prêmio médio
+    if (random > 5) return betAmount * 8;     // 5% chance - prêmio grande
+    if (random > 2) return betAmount * 15;    // 3% chance - prêmio grande
+    return betAmount * 25;                    // 2% chance - prêmio máximo
+  };
+
+  const getSymbolMultiplier = (symbol) => {
+    switch (symbol) {
+      case '💰': return 25;
+      case '💎': return 15;
+      case '⭐': return 10;
+      case '🔔': return 8;
+      case '🍇': return 5;
+      case '🍊': return 4;
+      case '🍋': return 3;
+      case '🍒': return 2;
+      default: return 1;
+    }
+  };
+
+  const generateRandomSlots = () => {
+    return Array(3).fill().map(() => 
+      Array(3).fill().map(() => symbols[Math.floor(Math.random() * symbols.length)])
+    );
+  };
+
+  const spin = async () => {
+    if (balance < betAmount || isSpinning) return;
+    
+    setIsSpinning(true);
+    const newBalance = balance - betAmount;
+    setBalance(newBalance);
+    setLastWin(0);
+    
+    const newTotalSpins = totalSpins + 1;
+    setTotalSpins(newTotalSpins);
+    
+    // Animação de rotação
+    const spinDuration = 2000;
+    const intervals = [];
+    
+    for (let col = 0; col < 3; col++) {
+      const interval = setInterval(() => {
+        setSlots(prevSlots => {
+          const newSlots = [...prevSlots];
+          for (let row = 0; row < 3; row++) {
+            newSlots[row] = [...newSlots[row]];
+            newSlots[row][col] = symbols[Math.floor(Math.random() * symbols.length)];
+          }
+          return newSlots;
+        });
+      }, 100);
+      intervals.push(interval);
+      
+      setTimeout(() => clearInterval(interval), spinDuration + col * 300);
+    }
+    
+    // Resultado final
+    setTimeout(() => {
+      const finalSlots = generateRandomSlots();
+      setSlots(finalSlots);
+      
+      const winAmount = calculateWin(finalSlots, newTotalSpins);
+      
+      if (winAmount > 0) {
+        setLastWin(winAmount);
+        const finalBalance = newBalance + winAmount;
+        setBalance(finalBalance);
+        updateUserData({ 
+          balance: finalBalance,
+          totalSpins: newTotalSpins
+        });
+        setShowWinAnimation(true);
+        setTimeout(() => setShowWinAnimation(false), 2000);
+      } else {
+        updateUserData({ 
+          balance: newBalance,
+          totalSpins: newTotalSpins
+        });
+      }
+      
+      setIsSpinning(false);
+    }, spinDuration + 900);
+  };
+
+  // Componente de Login/Registro
+  const AuthComponent = () => (
+    <div className="min-h-screen bg-black flex items-center justify-center p-4">
+      <div className="max-w-md w-full">
+        <div className="text-center mb-8">
+          <Zap className="w-16 h-16 text-yellow-400 mx-auto mb-4" />
+          <h1 className="text-4xl font-bold text-yellow-400">ROYAL SLOTS</h1>
+          <p className="text-gray-400 mt-2">Entre ou crie sua conta para jogar</p>
+        </div>
+
+        <div className="bg-gray-900 p-8 rounded-lg border border-gray-700">
+          <div className="flex mb-6">
+            <button
+              onClick={() => setShowLogin(true)}
+              className={`flex-1 py-2 px-4 rounded-l-lg transition-colors ${
+                showLogin ? 'bg-yellow-400 text-black' : 'bg-gray-700 text-white'
+              }`}
+            >
+              Entrar
+            </button>
+            <button
+              onClick={() => setShowLogin(false)}
+              className={`flex-1 py-2 px-4 rounded-r-lg transition-colors ${
+                !showLogin ? 'bg-yellow-400 text-black' : 'bg-gray-700 text-white'
+              }`}
+            >
+              Registrar
+            </button>
+          </div>
+
+          {showLogin ? (
+            <div className="space-y-4">
+              <input
+                type="email"
+                placeholder="Email"
+                className="w-full p-3 bg-gray-800 rounded-lg border border-gray-600 text-white"
+                value={loginData.email}
+                onChange={(e) => setLoginData({...loginData, email: e.target.value})}
+              />
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Senha"
+                  className="w-full p-3 bg-gray-800 rounded-lg border border-gray-600 text-white pr-10"
+                  value={loginData.password}
+                  onChange={(e) => setLoginData({...loginData, password: e.target.value})}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-3 text-gray-400"
+                >
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
+              <button
+                onClick={login}
+                className="w-full bg-yellow-400 text-black font-bold py-3 rounded-lg hover:bg-yellow-500 transition-colors"
+              >
+                Entrar
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <input
+                type="text"
+                placeholder="Nome completo"
+                className="w-full p-3 bg-gray-800 rounded-lg border border-gray-600 text-white"
+                value={registerData.name}
+                onChange={(e) => setRegisterData({...registerData, name: e.target.value})}
+              />
+              <input
+                type="email"
+                placeholder="Email"
+                className="w-full p-3 bg-gray-800 rounded-lg border border-gray-600 text-white"
+                value={registerData.email}
+                onChange={(e) => setRegisterData({...registerData, email: e.target.value})}
+              />
+              <input
+                type="password"
+                placeholder="Senha"
+                className="w-full p-3 bg-gray-800 rounded-lg border border-gray-600 text-white"
+                value={registerData.password}
+                onChange={(e) => setRegisterData({...registerData, password: e.target.value})}
+              />
+              <input
+                type="password"
+                placeholder="Confirmar senha"
+                className="w-full p-3 bg-gray-800 rounded-lg border border-gray-600 text-white"
+                value={registerData.confirmPassword}
+                onChange={(e) => setRegisterData({...registerData, confirmPassword: e.target.value})}
+              />
+              <button
+                onClick={register}
+                className="w-full bg-green-600 text-white font-bold py-3 rounded-lg hover:bg-green-700 transition-colors"
+              >
+                Criar Conta
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  if (!isAuthenticated) {
+    return <AuthComponent />;
+  }
+
+  return (
+    <div className="min-h-screen bg-black text-white p-4">
+      {/* Header */}
+      <div className="max-w-4xl mx-auto">
+        <div className="flex justify-between items-center mb-8 bg-gray-900 p-4 rounded-lg border border-gray-700">
+          <div className="flex items-center space-x-4">
+            <Zap className="w-8 h-8 text-yellow-400" />
+            <div>
+              <h1 className="text-2xl font-bold text-yellow-400">ROYAL SLOTS</h1>
+              <p className="text-sm text-gray-400">Bem-vindo, {user?.name}</p>
+            </div>
+          </div>
+          
+          <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2 bg-green-800 px-4 py-2 rounded-lg">
+              <DollarSign className="w-5 h-5" />
+              <span className="font-bold text-lg">{balance.toFixed(2)}</span>
+            </div>
+            
+            <button
+              onClick={() => setShowDepositModal(true)}
+              className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg transition-colors"
+            >
+              <ArrowDownCircle className="w-4 h-4" />
+              <span>Depositar</span>
+            </button>
+            
+            <button
+              onClick={() => setShowWithdrawModal(true)}
+              className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors"
+              disabled={balance === 0}
+            >
+              <ArrowUpCircle className="w-4 h-4" />
+              <span>Sacar</span>
+            </button>
+            
+            <button
+              onClick={logout}
+              className="flex items-center space-x-2 bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>Sair</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Slot Machine */}
+        <div className="text-center mb-8">
+          <div className="inline-block bg-gray-900 p-8 rounded-xl border-4 border-yellow-400 shadow-2xl">
+            <div className="grid grid-cols-3 gap-2 mb-6">
+              {slots.map((row, rowIndex) => (
+                row.map((symbol, colIndex) => (
+                  <div
+                    key={`${rowIndex}-${colIndex}`}
+                    className={`w-20 h-20 bg-gray-800 border-2 border-gray-600 rounded-lg flex items-center justify-center text-3xl transform transition-all duration-200 ${
+                      isSpinning ? 'animate-pulse scale-105' : ''
+                    }`}
+                  >
+                    {symbol}
+                  </div>
+                ))
+              ))}
+            </div>
+            
+            <div className="mb-4">
+              <div className="flex justify-center space-x-2">
+                {[0, 1, 2].map(row => (
+                  <div
+                    key={row}
+                    className={`w-12 h-1 rounded ${
+                      slots[row][0] === slots[row][1] && slots[row][1] === slots[row][2]
+                        ? 'bg-yellow-400 animate-pulse'
+                        : 'bg-gray-600'
+                    }`}
+                  />
+                ))}
+              </div>
+              <p className="text-sm text-gray-400 mt-2">Linhas de Pagamento</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Win Animation */}
+        {showWinAnimation && (
+          <div className="fixed inset-0 flex items-center justify-center pointer-events-none z-50">
+            <div className="text-center animate-bounce">
+              <Trophy className="w-16 h-16 text-yellow-400 mx-auto mb-2" />
+              <div className="text-4xl font-bold text-yellow-400">VOCÊ GANHOU!</div>
+              <div className="text-2xl text-green-400">+${lastWin.toFixed(2)}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Withdraw Success Animation */}
+        {showWithdrawSuccess && (
+          <div className="fixed inset-0 flex items-center justify-center pointer-events-none z-50">
+            <div className="text-center animate-bounce bg-green-900 p-8 rounded-lg border-2 border-green-400">
+              <div className="flex justify-center mb-4">
+                {[...Array(5)].map((_, i) => (
+                  <DollarSign key={i} className="w-8 h-8 text-green-400 animate-pulse" style={{animationDelay: `${i * 0.1}s`}} />
+                ))}
+              </div>
+              <CheckCircle className="w-16 h-16 text-green-400 mx-auto mb-2" />
+              <div className="text-2xl font-bold text-green-400">SAQUE REALIZADO!</div>
+              <div className="text-lg text-white">Valor sacado com sucesso</div>
+            </div>
+          </div>
+        )}
+
+        {/* Bet Controls */}
+        <div className="max-w-md mx-auto bg-gray-900 p-6 rounded-lg border border-gray-700 mb-6">
+          <div className="mb-4">
+            <label className="block text-sm font-medium mb-2">Valor da Aposta</label>
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => setBetAmount(Math.max(5, betAmount - 5))}
+                className="bg-red-600 hover:bg-red-700 p-2 rounded-lg transition-colors"
+                disabled={isSpinning}
+              >
+                <Minus className="w-4 h-4" />
+              </button>
+              
+              <div className="flex space-x-2">
+                {betOptions.map(option => (
+                  <button
+                    key={option}
+                    onClick={() => setBetAmount(option)}
+                    className={`px-3 py-2 rounded-lg transition-colors ${
+                      betAmount === option
+                        ? 'bg-yellow-400 text-black font-bold'
+                        : 'bg-gray-700 hover:bg-gray-600'
+                    }`}
+                    disabled={isSpinning}
+                  >
+                    ${option}
+                  </button>
+                ))}
+              </div>
+              
+              <button
+                onClick={() => setBetAmount(Math.min(500, betAmount + 5))}
+                className="bg-green-600 hover:bg-green-700 p-2 rounded-lg transition-colors"
+                disabled={isSpinning}
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+          
+          <div className="text-center">
+            <div className="text-lg font-semibold mb-2">Aposta: ${betAmount}</div>
+            {lastWin > 0 && (
+              <div className="text-green-400 font-bold mb-2">
+                Última Vitória: +${lastWin.toFixed(2)}
+              </div>
+            )}
+            <div className="text-sm text-gray-400">
+              Total de Giros: {totalSpins}
+            </div>
+          </div>
+        </div>
+
+        {/* Spin Button */}
+        <div className="text-center mb-8">
+          <button
+            onClick={spin}
+            disabled={isSpinning || balance < betAmount}
+            className={`px-12 py-4 text-xl font-bold rounded-lg transition-all transform ${
+              isSpinning || balance < betAmount
+                ? 'bg-gray-600 cursor-not-allowed'
+                : 'bg-gradient-to-r from-yellow-400 to-orange-500 hover:from-yellow-500 hover:to-orange-600 text-black hover:scale-105 shadow-lg'
+            }`}
+          >
+            {isSpinning ? (
+              <div className="flex items-center space-x-2">
+                <RotateCcw className="w-6 h-6 animate-spin" />
+                <span>GIRANDO...</span>
+              </div>
+            ) : (
+              <div className="flex items-center space-x-2">
+                <Coins className="w-6 h-6" />
+                <span>GIRAR</span>
+              </div>
+            )}
+          </button>
+          
+          {balance < betAmount && (
+            <p className="text-red-400 mt-2">Saldo insuficiente para esta aposta</p>
+          )}
+        </div>
+
+        {/* Paytable */}
+        <div className="bg-gray-900 p-6 rounded-lg border border-gray-700">
+          <h3 className="text-lg font-bold mb-4 text-center">Tabela de Pagamentos</h3>
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="flex justify-between">
+              <span>💰 💰 💰</span>
+              <span className="text-yellow-400">25x</span>
+            </div>
+            <div className="flex justify-between">
+              <span>💎 💎 💎</span>
+              <span className="text-blue-400">15x</span>
+            </div>
+            <div className="flex justify-between">
+              <span>⭐ ⭐ ⭐</span>
+              <span className="text-purple-400">10x</span>
+            </div>
+            <div className="flex justify-between">
+              <span>🔔 🔔 🔔</span>
+              <span className="text-green-400">8x</span>
+            </div>
+            <div className="flex justify-between">
+              <span>🍇 🍇 🍇</span>
+              <span className="text-purple-400">5x</span>
+            </div>
+            <div className="flex justify-between">
+              <span>🍊 🍊 🍊</span>
+              <span className="text-orange-400">4x</span>
+            </div>
+          </div>
+          <p className="text-xs text-gray-400 mt-4 text-center">
+            * RTP: ~88% | Apenas linhas horizontais válidas
+          </p>
+        </div>
+      </div>
+
+      {/* Deposit Modal */}
+      {showDepositModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+          <div className="bg-gray-900 p-8 rounded-lg border border-gray-700 max-w-md w-full mx-4">
+            <h2 className="text-2xl font-bold mb-6 text-center">Fazer Depósito</h2>
+            
+            <div className="mb-6">
+              <label className="block text-sm font-medium mb-2">Valor do Depósito</label>
+              <div className="grid grid-cols-3 gap-2 mb-4">
+                {[25, 50, 100, 250, 500, 1000].map(amount => (
+                  <button
+                    key={amount}
+                    onClick={() => setDepositAmount(amount)}
+                    className={`p-3 rounded-lg transition-colors ${
+                      depositAmount === amount
+                        ? 'bg-green-600 text-white'
+                        : 'bg-gray-700 hover:bg-gray-600'
+                    }`}
+                  >
+                    ${amount}
+                  </button>
+                ))}
+              </div>
+              
+              <div className="text-center mb-4">
+                <span className="text-lg font-semibold">Valor: ${depositAmount}</span>
+              </div>
+            </div>
+            
+            <div className="flex space-x-4">
+              <button
+                onClick={() => setShowDepositModal(false)}
+                className="flex-1 bg-gray-600 hover:bg-gray-700 py-3 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={deposit}
+                className="flex-1 bg-green-600 hover:bg-green-700 py-3 rounded-lg transition-colors"
+              >
+                Confirmar Depósito
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Withdraw Modal */}
+      {showWithdrawModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+          <div className="bg-gray-900 p-8 rounded-lg border border-gray-700 max-w-md w-full mx-4">
+            <h2 className="text-2xl font-bold mb-6 text-center">Realizar Saque</h2>
+            
+            <div className="mb-6">
+              <label className="block text-sm font-medium mb-2">Valor do Saque</label>
+              <div className="mb-4">
+                <input
+                  type="number"
+                  min="10"
+                  max={balance}
+                  value={withdrawAmount}
+                  onChange={(e) => setWithdrawAmount(parseFloat(e.target.value) || 0)}
+                  className="w-full p-3 bg-gray-800 rounded-lg border border-gray-600 text-white"
+                  placeholder="Digite o valor"
+                />
+              </div>
+              
+              <div className="text-center mb-4">
+                <span className="text-sm text-gray-400">Saldo disponível: ${balance.toFixed(2)}</span>
+              </div>
+              
+              <div className="bg-yellow-900 border border-yellow-600 p-3 rounded-lg mb-4">
+                <p className="text-yellow-200 text-sm">
+                  ⚠️ Ao realizar o saque, seu saldo será zerado e o valor será transferido.
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex space-x-4">
+              <button
+                onClick={() => setShowWithdrawModal(false)}
+                className="flex-1 bg-gray-600 hover:bg-gray-700 py-3 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={withdraw}
+                disabled={withdrawAmount <= 0 || withdrawAmount > balance}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 py-3 rounded-lg transition-colors"
+              >
+                Confirmar Saque
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default SlotApp;
