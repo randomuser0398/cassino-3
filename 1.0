@@ -1,0 +1,363 @@
+import React, { useState, useEffect } from 'react';
+import { Coins, Plus, Minus, RotateCcw, DollarSign, Trophy, Zap } from 'lucide-react';
+
+const SlotGame = () => {
+  const [balance, setBalance] = useState(1000);
+  const [betAmount, setBetAmount] = useState(10);
+  const [isSpinning, setIsSpinning] = useState(false);
+  const [slots, setSlots] = useState([
+    ['🍒', '🍋', '🍊'],
+    ['⭐', '💎', '🍒'],
+    ['🍋', '🍊', '⭐']
+  ]);
+  const [showRechargeModal, setShowRechargeModal] = useState(false);
+  const [rechargeAmount, setRechargeAmount] = useState(100);
+  const [lastWin, setLastWin] = useState(0);
+  const [spinCount, setSpinCount] = useState(0);
+  const [showWinAnimation, setShowWinAnimation] = useState(false);
+
+  const symbols = ['🍒', '🍋', '🍊', '⭐', '💎', '🔔', '🍇', '💰'];
+  
+  const betOptions = [5, 10, 25, 50, 100];
+
+  const checkWin = (newSlots) => {
+    let totalWin = 0;
+    
+    // Verificar linhas horizontais
+    for (let row = 0; row < 3; row++) {
+      if (newSlots[row][0] === newSlots[row][1] && newSlots[row][1] === newSlots[row][2]) {
+        const symbol = newSlots[row][0];
+        let multiplier = 2;
+        
+        // Diferentes multiplicadores por símbolo
+        switch (symbol) {
+          case '💰': multiplier = 10; break;
+          case '💎': multiplier = 8; break;
+          case '⭐': multiplier = 6; break;
+          case '🔔': multiplier = 4; break;
+          default: multiplier = 3; break;
+        }
+        
+        totalWin += betAmount * multiplier;
+      }
+    }
+    
+    return totalWin;
+  };
+
+  const generateRandomSlots = () => {
+    return Array(3).fill().map(() => 
+      Array(3).fill().map(() => symbols[Math.floor(Math.random() * symbols.length)])
+    );
+  };
+
+  const spin = async () => {
+    if (balance < betAmount || isSpinning) return;
+    
+    setIsSpinning(true);
+    setBalance(balance - betAmount);
+    setLastWin(0);
+    
+    // Animação de rotação
+    const spinDuration = 2000;
+    const intervals = [];
+    
+    // Animar cada coluna separadamente
+    for (let col = 0; col < 3; col++) {
+      const interval = setInterval(() => {
+        setSlots(prevSlots => {
+          const newSlots = [...prevSlots];
+          for (let row = 0; row < 3; row++) {
+            newSlots[row] = [...newSlots[row]];
+            newSlots[row][col] = symbols[Math.floor(Math.random() * symbols.length)];
+          }
+          return newSlots;
+        });
+      }, 100);
+      intervals.push(interval);
+      
+      // Parar cada coluna em tempos diferentes
+      setTimeout(() => {
+        clearInterval(interval);
+      }, spinDuration + col * 300);
+    }
+    
+    // Resultado final
+    setTimeout(() => {
+      const newSpinCount = spinCount + 1;
+      setSpinCount(newSpinCount);
+      
+      let finalSlots;
+      
+      // Lógica: 1 em 5 giros é favorável ao jogador
+      if (newSpinCount % 5 === 0) {
+        // Criar um resultado vencedor
+        const winningRow = Math.floor(Math.random() * 3);
+        const winningSymbol = symbols[Math.floor(Math.random() * symbols.length)];
+        
+        finalSlots = generateRandomSlots();
+        finalSlots[winningRow] = [winningSymbol, winningSymbol, winningSymbol];
+      } else {
+        // Resultado perdedor (sem 3 iguais em linha)
+        do {
+          finalSlots = generateRandomSlots();
+        } while (checkWin(finalSlots) > 0);
+      }
+      
+      setSlots(finalSlots);
+      
+      const winAmount = checkWin(finalSlots);
+      if (winAmount > 0) {
+        setLastWin(winAmount);
+        setBalance(prev => prev + winAmount);
+        setShowWinAnimation(true);
+        setTimeout(() => setShowWinAnimation(false), 2000);
+      }
+      
+      setIsSpinning(false);
+    }, spinDuration + 900);
+  };
+
+  const recharge = () => {
+    setBalance(balance + rechargeAmount);
+    setShowRechargeModal(false);
+  };
+
+  return (
+    <div className="min-h-screen bg-black text-white p-4">
+      {/* Header */}
+      <div className="max-w-4xl mx-auto">
+        <div className="flex justify-between items-center mb-8 bg-gray-900 p-4 rounded-lg border border-gray-700">
+          <div className="flex items-center space-x-4">
+            <Zap className="w-8 h-8 text-yellow-400" />
+            <h1 className="text-2xl font-bold text-yellow-400">ROYAL SLOTS</h1>
+          </div>
+          
+          <div className="flex items-center space-x-6">
+            <div className="flex items-center space-x-2 bg-green-800 px-4 py-2 rounded-lg">
+              <DollarSign className="w-5 h-5" />
+              <span className="font-bold text-lg">{balance.toFixed(2)}</span>
+            </div>
+            <button
+              onClick={() => setShowRechargeModal(true)}
+              className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Recarregar</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Slot Machine */}
+        <div className="text-center mb-8">
+          <div className="inline-block bg-gray-900 p-8 rounded-xl border-4 border-yellow-400 shadow-2xl">
+            <div className="grid grid-cols-3 gap-2 mb-6">
+              {slots.map((row, rowIndex) => (
+                row.map((symbol, colIndex) => (
+                  <div
+                    key={`${rowIndex}-${colIndex}`}
+                    className={`w-20 h-20 bg-gray-800 border-2 border-gray-600 rounded-lg flex items-center justify-center text-3xl transform transition-all duration-200 ${
+                      isSpinning ? 'animate-pulse scale-105' : ''
+                    }`}
+                  >
+                    {symbol}
+                  </div>
+                ))
+              ))}
+            </div>
+            
+            {/* Win Lines Indicator */}
+            <div className="mb-4">
+              <div className="flex justify-center space-x-2">
+                {[0, 1, 2].map(row => (
+                  <div
+                    key={row}
+                    className={`w-12 h-1 rounded ${
+                      slots[row][0] === slots[row][1] && slots[row][1] === slots[row][2]
+                        ? 'bg-yellow-400 animate-pulse'
+                        : 'bg-gray-600'
+                    }`}
+                  />
+                ))}
+              </div>
+              <p className="text-sm text-gray-400 mt-2">Linhas de Pagamento</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Win Animation */}
+        {showWinAnimation && (
+          <div className="fixed inset-0 flex items-center justify-center pointer-events-none z-50">
+            <div className="text-center animate-bounce">
+              <Trophy className="w-16 h-16 text-yellow-400 mx-auto mb-2" />
+              <div className="text-4xl font-bold text-yellow-400">VOCÊ GANHOU!</div>
+              <div className="text-2xl text-green-400">+${lastWin.toFixed(2)}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Bet Controls */}
+        <div className="max-w-md mx-auto bg-gray-900 p-6 rounded-lg border border-gray-700 mb-6">
+          <div className="mb-4">
+            <label className="block text-sm font-medium mb-2">Valor da Aposta</label>
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => setBetAmount(Math.max(5, betAmount - 5))}
+                className="bg-red-600 hover:bg-red-700 p-2 rounded-lg transition-colors"
+                disabled={isSpinning}
+              >
+                <Minus className="w-4 h-4" />
+              </button>
+              
+              <div className="flex space-x-2">
+                {betOptions.map(option => (
+                  <button
+                    key={option}
+                    onClick={() => setBetAmount(option)}
+                    className={`px-3 py-2 rounded-lg transition-colors ${
+                      betAmount === option
+                        ? 'bg-yellow-400 text-black font-bold'
+                        : 'bg-gray-700 hover:bg-gray-600'
+                    }`}
+                    disabled={isSpinning}
+                  >
+                    ${option}
+                  </button>
+                ))}
+              </div>
+              
+              <button
+                onClick={() => setBetAmount(Math.min(500, betAmount + 5))}
+                className="bg-green-600 hover:bg-green-700 p-2 rounded-lg transition-colors"
+                disabled={isSpinning}
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+          
+          <div className="text-center">
+            <div className="text-lg font-semibold mb-2">Aposta: ${betAmount}</div>
+            {lastWin > 0 && (
+              <div className="text-green-400 font-bold mb-2">
+                Última Vitória: +${lastWin.toFixed(2)}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Spin Button */}
+        <div className="text-center mb-8">
+          <button
+            onClick={spin}
+            disabled={isSpinning || balance < betAmount}
+            className={`px-12 py-4 text-xl font-bold rounded-lg transition-all transform ${
+              isSpinning || balance < betAmount
+                ? 'bg-gray-600 cursor-not-allowed'
+                : 'bg-gradient-to-r from-yellow-400 to-orange-500 hover:from-yellow-500 hover:to-orange-600 text-black hover:scale-105 shadow-lg'
+            }`}
+          >
+            {isSpinning ? (
+              <div className="flex items-center space-x-2">
+                <RotateCcw className="w-6 h-6 animate-spin" />
+                <span>GIRANDO...</span>
+              </div>
+            ) : (
+              <div className="flex items-center space-x-2">
+                <Coins className="w-6 h-6" />
+                <span>GIRAR</span>
+              </div>
+            )}
+          </button>
+          
+          {balance < betAmount && (
+            <p className="text-red-400 mt-2">Saldo insuficiente para esta aposta</p>
+          )}
+        </div>
+
+        {/* Paytable */}
+        <div className="bg-gray-900 p-6 rounded-lg border border-gray-700">
+          <h3 className="text-lg font-bold mb-4 text-center">Tabela de Pagamentos</h3>
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="flex justify-between">
+              <span>💰 💰 💰</span>
+              <span className="text-yellow-400">10x</span>
+            </div>
+            <div className="flex justify-between">
+              <span>💎 💎 💎</span>
+              <span className="text-blue-400">8x</span>
+            </div>
+            <div className="flex justify-between">
+              <span>⭐ ⭐ ⭐</span>
+              <span className="text-purple-400">6x</span>
+            </div>
+            <div className="flex justify-between">
+              <span>🔔 🔔 🔔</span>
+              <span className="text-green-400">4x</span>
+            </div>
+            <div className="flex justify-between">
+              <span>🍒 🍒 🍒</span>
+              <span className="text-red-400">3x</span>
+            </div>
+            <div className="flex justify-between">
+              <span>🍋 🍋 🍋</span>
+              <span className="text-yellow-400">3x</span>
+            </div>
+          </div>
+          <p className="text-xs text-gray-400 mt-4 text-center">
+            * Apenas linhas horizontais são válidas para ganhar
+          </p>
+        </div>
+      </div>
+
+      {/* Recharge Modal */}
+      {showRechargeModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+          <div className="bg-gray-900 p-8 rounded-lg border border-gray-700 max-w-md w-full mx-4">
+            <h2 className="text-2xl font-bold mb-6 text-center">Recarregar Créditos</h2>
+            
+            <div className="mb-6">
+              <label className="block text-sm font-medium mb-2">Valor da Recarga</label>
+              <div className="grid grid-cols-3 gap-2 mb-4">
+                {[50, 100, 250, 500, 1000, 2500].map(amount => (
+                  <button
+                    key={amount}
+                    onClick={() => setRechargeAmount(amount)}
+                    className={`p-3 rounded-lg transition-colors ${
+                      rechargeAmount === amount
+                        ? 'bg-green-600 text-white'
+                        : 'bg-gray-700 hover:bg-gray-600'
+                    }`}
+                  >
+                    ${amount}
+                  </button>
+                ))}
+              </div>
+              
+              <div className="text-center mb-4">
+                <span className="text-lg font-semibold">Valor: ${rechargeAmount}</span>
+              </div>
+            </div>
+            
+            <div className="flex space-x-4">
+              <button
+                onClick={() => setShowRechargeModal(false)}
+                className="flex-1 bg-gray-600 hover:bg-gray-700 py-3 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={recharge}
+                className="flex-1 bg-green-600 hover:bg-green-700 py-3 rounded-lg transition-colors"
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default SlotGame;
