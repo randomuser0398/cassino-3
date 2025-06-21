@@ -1,0 +1,534 @@
+// server.js - Backend para Sistema de Slots
+const express = require('express');
+const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
+const rateLimit = require('express-rate-limit');
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+const JWT_SECRET = process.env.JWT_SECRET || 'sua_chave_secreta_super_segura';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/slots_game';
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 100 // máximo 100 requests por IP
+});
+app.use(limiter);
+
+// Conectar ao MongoDB
+mongoose.connect(MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+});
+
+// Schema do Usuário
+const userSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  balance: { type: Number, default: 0 },
+  totalDeposits: { type: Number, default: 0 },
+  totalWithdraws: { type: Number, default: 0 },
+  totalSpins: { type: Number, default: 0 },
+  totalWins: { type: Number, default: 0 },
+  totalLosses: { type: Number, default: 0 },
+  isActive: { type: Boolean, default: true },
+  lastLogin: { type: Date },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const User = mongoose.model('User', userSchema);
+
+// Schema de Transações
+const transactionSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  type: { type: String, enum: ['deposit', 'withdraw', 'win', 'bet'], required: true },
+  amount: { type: Number, required: true },
+  balanceBefore: { type: Number, required: true },
+  balanceAfter: { type: Number, required: true },
+  description: { type: String },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const Transaction = mongoose.model('Transaction', transactionSchema);
+
+// Schema de Jogadas
+const gameLogSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  betAmount: { type: Number, required: true },
+  winAmount: { type: Number, default: 0 },
+  slots: { type: [[String]], required: true },
+  isWin: { type: Boolean, default: false },
+  rtp: { type: Number }, // Return to Player para esta jogada específica
+  createdAt: { type: Date, default: Date.now }
+});
+
+const GameLog = mongoose.model('GameLog', gameLogSchema);
+
+// Middleware de autenticação
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ error: 'Token de acesso requerido' });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ error: 'Token inválido' });
+    }
+    req.user = user;
+    next();
+  });
+};
+
+// Função para calcular RTP dinâmico
+const calculateDynamicRTP = async (userId) => {
+  const recentGames = await GameLog.find({
+    userId,
+    createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } // últimas 24h
+  }).sort({ createdAt: -1 }).limit(50);
+
+  if (recentGames.length === 0) return 0.88; // RTP padrão
+
+  const totalBet = recentGames.reduce((sum, game) => sum + game.betAmount, 0);
+  const totalWin = recentGames.reduce((sum, game) => sum + game.winAmount, 0);
+  
+  const currentRTP = totalBet > 0 ? totalWin / totalBet : 0;
+  
+  // Ajustar RTP dinamicamente (target: 85-92%)
+  if (currentRTP < 0.85) return 0.92; // Aumentar chances de ganhar
+  if (currentRTP > 0.92) return 0.80; // Diminuir chances de ganhar
+  
+  return 0.88; // RTP padrão
+};
+
+// Lógica de jogo rentável
+const calculateGameResult = async (userId, betAmount) => {
+  const symbols = ['🍒', '🍋', '🍊', '⭐', '💎', '🔔', '🍇', '💰'];
+  const multipliers = {
+    '💰': 25, '💎': 15, '⭐': 10, '🔔': 8,
+    '🍇': 5, '🍊': 4, '🍋': 3, '🍒': 2
+  };
+
+  // Gerar slots aleatórios
+  const slots = Array(3).fill().map(() => 
+    Array(3).fill().map(() => symbols[Math.floor(Math.random() * symbols.length)])
+  );
+
+  // Calcular RTP dinâmico para este usuário
+  const targetRTP = await calculateDynamicRTP(userId);
+  const random = Math.random();
+
+  let winAmount = 0;
+  let isWin = false;
+
+  // Verificar vitórias naturais primeiro
+  for (let row = 0; row < 3; row++) {
+    if (slots[row][0] === slots[row][1] && slots[row][1] === slots[row][2]) {
+      const symbol = slots[row][0];
+      winAmount += betAmount * (multipliers[symbol] || 1);
+      isWin = true;
+    }
+  }
+
+  // Se não houve vitória natural, aplicar lógica de RTP
+  if (!isWin && random < targetRTP) {
+    // Forçar uma vitória baseada no RTP target
+    const winRow = Math.floor(Math.random() * 3);
+    const winSymbol = symbols[Math.floor(Math.random() * symbols.length)];
+    
+    slots[winRow] = [winSymbol, winSymbol, winSymbol];
+    winAmount = betAmount * (multipliers[winSymbol] || 1);
+    isWin = true;
+  }
+
+  // Aplicar variação de premiação (house edge)
+  if (isWin) {
+    // 15% de chance de reduzir o prêmio (house edge)
+    if (Math.random() < 0.15) {
+      winAmount *= 0.7; // Reduzir prêmio em 30%
+    }
+  }
+
+  return { slots, winAmount: Math.floor(winAmount), isWin };
+};
+
+// Rotas da API
+
+// Registro de usuário
+app.post('/api/register', async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    // Validações
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Todos os campos são obrigatórios' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Senha deve ter pelo menos 6 caracteres' });
+    }
+
+    // Verificar se usuário já existe
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ error: 'Email já cadastrado' });
+    }
+
+    // Hash da senha
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Criar usuário
+    const user = new User({
+      name,
+      email,
+      password: hashedPassword
+    });
+
+    await user.save();
+
+    // Gerar token
+    const token = jwt.sign(
+      { userId: user._id, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.status(201).json({
+      message: 'Usuário criado com sucesso',
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        balance: user.balance
+      }
+    });
+  } catch (error) {
+    console.error('Erro no registro:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Login
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Validações
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email e senha são obrigatórios' });
+    }
+
+    // Buscar usuário
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ error: 'Credenciais inválidas' });
+    }
+
+    // Verificar senha
+    const isValidPassword = await bcrypt.compare(password, user.password);
+    if (!isValidPassword) {
+      return res.status(400).json({ error: 'Credenciais inválidas' });
+    }
+
+    // Atualizar último login
+    user.lastLogin = new Date();
+    await user.save();
+
+    // Gerar token
+    const token = jwt.sign(
+      { userId: user._id, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      message: 'Login realizado com sucesso',
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        balance: user.balance,
+        totalSpins: user.totalSpins
+      }
+    });
+  } catch (error) {
+    console.error('Erro no login:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Perfil do usuário
+app.get('/api/profile', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId).select('-password');
+    if (!user) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    res.json({ user });
+  } catch (error) {
+    console.error('Erro ao buscar perfil:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Depósito
+app.post('/api/deposit', authenticateToken, async (req, res) => {
+  try {
+    const { amount } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'Valor de depósito inválido' });
+    }
+
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    const balanceBefore = user.balance;
+    user.balance += amount;
+    user.totalDeposits += amount;
+
+    await user.save();
+
+    // Registrar transação
+    const transaction = new Transaction({
+      userId: user._id,
+      type: 'deposit',
+      amount,
+      balanceBefore,
+      balanceAfter: user.balance,
+      description: 'Depósito realizado'
+    });
+
+    await transaction.save();
+
+    res.json({
+      message: 'Depósito realizado com sucesso',
+      balance: user.balance,
+      transaction: transaction
+    });
+  } catch (error) {
+    console.error('Erro no depósito:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Saque
+app.post('/api/withdraw', authenticateToken, async (req, res) => {
+  try {
+    const { amount } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'Valor de saque inválido' });
+    }
+
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    if (user.balance < amount) {
+      return res.status(400).json({ error: 'Saldo insuficiente' });
+    }
+
+    const balanceBefore = user.balance;
+    user.balance = 0; // Zerar saldo conforme solicitado
+    user.totalWithdraws += amount;
+
+    await user.save();
+
+    // Registrar transação
+    const transaction = new Transaction({
+      userId: user._id,
+      type: 'withdraw',
+      amount,
+      balanceBefore,
+      balanceAfter: user.balance,
+      description: 'Saque realizado'
+    });
+
+    await transaction.save();
+
+    res.json({
+      message: 'Saque realizado com sucesso',
+      balance: user.balance,
+      withdrawAmount: amount,
+      transaction: transaction
+    });
+  } catch (error) {
+    console.error('Erro no saque:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Jogar (spin)
+app.post('/api/spin', authenticateToken, async (req, res) => {
+  try {
+    const { betAmount } = req.body;
+
+    if (!betAmount || betAmount <= 0) {
+      return res.status(400).json({ error: 'Valor de aposta inválido' });
+    }
+
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    if (user.balance < betAmount) {
+      return res.status(400).json({ error: 'Saldo insuficiente' });
+    }
+
+    // Calcular resultado do jogo
+    const gameResult = await calculateGameResult(user._id, betAmount);
+    
+    const balanceBefore = user.balance;
+    user.balance -= betAmount; // Debitar aposta
+    user.totalSpins += 1;
+
+    if (gameResult.isWin) {
+      user.balance += gameResult.winAmount;
+      user.totalWins += 1;
+    } else {
+      user.totalLosses += 1;
+    }
+
+    await user.save();
+
+    // Registrar transação da aposta
+    const betTransaction = new Transaction({
+      userId: user._id,
+      type: 'bet',
+      amount: -betAmount,
+      balanceBefore,
+      balanceAfter: user.balance - (gameResult.isWin ? gameResult.winAmount : 0),
+      description: `Aposta de ${betAmount}`
+    });
+
+    await betTransaction.save();
+
+    // Registrar transação do prêmio (se houver)
+    if (gameResult.isWin) {
+      const winTransaction = new Transaction({
+        userId: user._id,
+        type: 'win',
+        amount: gameResult.winAmount,
+        balanceBefore: user.balance - gameResult.winAmount,
+        balanceAfter: user.balance,
+        description: `Prêmio de ${gameResult.winAmount}`
+      });
+
+      await winTransaction.save();
+    }
+
+    // Registrar log do jogo
+    const gameLog = new GameLog({
+      userId: user._id,
+      betAmount,
+      winAmount: gameResult.winAmount,
+      slots: gameResult.slots,
+      isWin: gameResult.isWin
+    });
+
+    await gameLog.save();
+
+    res.json({
+      message: 'Jogada realizada com sucesso',
+      slots: gameResult.slots,
+      winAmount: gameResult.winAmount,
+      isWin: gameResult.isWin,
+      balance: user.balance,
+      totalSpins: user.totalSpins
+    });
+  } catch (error) {
+    console.error('Erro na jogada:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Histórico de transações
+app.get('/api/transactions', authenticateToken, async (req, res) => {
+  try {
+    const { page = 1, limit = 20 } = req.query;
+    
+    const transactions = await Transaction.find({ userId: req.user.userId })
+      .sort({ createdAt: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const total = await Transaction.countDocuments({ userId: req.user.userId });
+
+    res.json({
+      transactions,
+      totalPages: Math.ceil(total / limit),
+      currentPage: page,
+      total
+    });
+  } catch (error) {
+    console.error('Erro ao buscar transações:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Estatísticas do usuário
+app.get('/api/stats', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId).select('-password');
+    
+    const recentGames = await GameLog.find({ userId: req.user.userId })
+      .sort({ createdAt: -1 })
+      .limit(100);
+
+    const totalBet = recentGames.reduce((sum, game) => sum + game.betAmount, 0);
+    const totalWon = recentGames.reduce((sum, game) => sum + game.winAmount, 0);
+    const rtp = totalBet > 0 ? ((totalWon / totalBet) * 100).toFixed(2) : 0;
+
+    res.json({
+      user: {
+        name: user.name,
+        email: user.email,
+        balance: user.balance,
+        totalDeposits: user.totalDeposits,
+        totalWithdraws: user.totalWithdraws,
+        totalSpins: user.totalSpins,
+        totalWins: user.totalWins,
+        totalLosses: user.totalLosses,
+        winRate: user.totalSpins > 0 ? ((user.totalWins / user.totalSpins) * 100).toFixed(2) : 0,
+        rtp: rtp,
+        memberSince: user.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Erro ao buscar estatísticas:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Middleware de tratamento de erros
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ error: 'Algo deu errado!' });
+});
+
+// Iniciar servidor
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor rodando na porta ${PORT}`);
+  console.log(`📊 Sistema de Slots API iniciado`);
+  console.log(`🎰 RTP configurado para 85-92%`);
+});
+
+module.exports = app;
